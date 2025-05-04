@@ -1,0 +1,6 @@
+/bank
+/ai-bank
+.env
+/__pycache__
+*.pyc
+/.venv
