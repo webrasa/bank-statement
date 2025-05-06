@@ -75,15 +75,22 @@ def clean_sql_output(sql_string: str) -> str:
 
     return cleaned
 
-def load_statements_by_month(account_number, month):
+def load_statements_by_month(account_number, period):
     connection = db_connect.connect_to_db()
     cursor = connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    query = "SELECT * FROM statements WHERE account_number = '"+account_number+"' AND  period_start_date = '01."+month+"';"
+    query = "SELECT * FROM statements WHERE account_number = '"+account_number+"' AND  period_start_date IN ("+period+");"
     cursor.execute(query)
     records = cursor.fetchall()
-    standard_dicts = [dict(row) for row in records]
+    # Calculate average salary
+    total_salary = float(0.0)
+    for row in records:
+        # print("row: ", row['total_credits'])
+        total_salary += float(row['total_credits'])
+    # print("total salary: ", total_salary)
+    
+    # standard_dicts = [dict(row) for row in records]
 
-    return standard_dicts
+    return Decimal(total_salary / len(records))
 
 @tool
 def execute_sql_query(query: str) -> list[tuple]:
@@ -138,7 +145,7 @@ def perform_debit_analysis(query_results: list[tuple], monthly_salary: float, pe
         total_debit = query_results[0][0]
         if total_debit is None:
              total_debit = 0.0
-        analysis["total_first_week_debit"] = float(total_debit)
+        analysis["total_first_week_debit"] = total_debit
         analysis["debits_exceed_threshold"] = analysis["total_first_week_debit"] > analysis["threshold_amount"]
     else:
         analysis["calculation_error"] = f"Unexpected query result format. Expected [[SUM]], got: {query_results}"
@@ -180,11 +187,13 @@ You are a helpful financial assistant. Based on the analysis results provided be
 Original User Question: {question}
 
 Analysis Results:
-- Total debits in the first week: {total_first_week_debit:.2f} {currency}
+- Total debits in the period: {total_first_week_debit:.2f} {currency}
 - Estimated monthly salary: {estimated_salary:.2f} {currency}
 - {percentage}% salary threshold amount: {threshold_amount:.2f} {currency}
 - Did debits exceed {percentage}% threshold?: {debits_exceed_threshold}
 - Calculation Error (if any): {calculation_error}
+- You need to mention the treshold amount in your answer using quotes.
+- Display year-month in words.
 
 Answer:
 """
@@ -225,22 +234,26 @@ full_chain = (
 # --- Main Execution ---
 if __name__ == "__main__":
     account = "325930050010370593"
-    statements = load_statements_by_month('325930050010370593', '08.2024')
+    month = '08'
+    year = '2024'
+    period = ["'01.08.2024'", "'01.09.2024'", "'01.10.2024'", "'01.11.2024'", "'01.12.2024'", "'01.01.2025'"]
+    period_query = ','.join(period)
+    estimated_salary = load_statements_by_month('325930050010370593', period_query)
 
-    estimated_salary = statements[0]['total_credits']
+    # estimated_salary = statements[0]['total_credits']
 
-    print(estimated_salary)
+    print("ESTIMATED SALARY: ", round(estimated_salary, 2))
 
-    # percentage = 40.0
+    percentage = 40.0
     # percentage = 60.0
-    percentage = 80.0
+    # percentage = 80.0
 
-    # analysis_period_description = 'first week (days 1 to 7)'
+    analysis_period_description = 'first week (days 1 to 7)'
     # analysis_period_description = "first two weeks (days 1 to 14)"
-    analysis_period_description = "first three weeks (days 1 to 21)"
+    # analysis_period_description = "first three weeks (days 1 to 21)"
     
 
-    target_month_year = "2024-08" 
+    target_month_year = year+'-'+month 
 
     user_question = (
         f"Are the total debits for account {account} in the {analysis_period_description} "
@@ -255,7 +268,7 @@ if __name__ == "__main__":
         "question": user_question,
         "account_number": account,
         "month_year": target_month_year,
-        "monthly_salary": estimated_salary,
+        "monthly_salary": round(estimated_salary, 2),
         "analysis_period_description": analysis_period_description, 
         "percentage": percentage
     }
