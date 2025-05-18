@@ -57,6 +57,9 @@ def get_historical_transactions(account_number: str, end_date: date, months_look
         AND TO_DATE(t.transaction_date, 'DD.MM.YYYY') < %s -- Use < end_date for lookback period
         AND t.debit_amount > 0;
     """
+
+    print(f"Query: {query}")
+    print(f"Params: {account_number}, {start_date}, {end_date}")
     df = pd.DataFrame()
     conn = None
     try:
@@ -72,6 +75,7 @@ def get_historical_transactions(account_number: str, end_date: date, months_look
             conn.close()
 
     print(f"Fetched {len(df)} historical transactions.")
+    # print(f"Amount {df}")
     return df
 
 def calculate_historical_weekly_avg(historical_df: pd.DataFrame) -> float:
@@ -86,11 +90,23 @@ def calculate_historical_weekly_avg(historical_df: pd.DataFrame) -> float:
 
     weekly_sums = df_indexed['debit_amount'].resample('W-MON').sum()
 
-    if weekly_sums.empty:
-        print("Warning: No weekly spending sums found in historical data.")
-        return 0.0
+    # TODO:
+    # Filter all null values from the weekly sums
+    weekly_sums = weekly_sums[weekly_sums > 0]
+    weekly_sums_len = len(weekly_sums)
 
-    average = weekly_sums.mean()
+    # TODO:
+    # Sum all the weekly sums
+    weekly_sums = weekly_sums.sum()
+
+    print(f"Calculated weekly sums: {weekly_sums}")
+
+    # if weekly_sums.empty:
+    #     print("Warning: No weekly spending sums found in historical data.")
+    #     return 0.0
+
+    # average = weekly_sums.mean()
+    average = weekly_sums / weekly_sums_len
     print(f"Calculated historical average weekly spend: {average:.2f}")
     return float(average)
 
@@ -170,29 +186,74 @@ def conditionally_invoke_llm_and_parse(input_data: Dict[str, Any]) -> str:
     Invokes the LLM summarization prompt only if jump_detected is True and no error.
     Otherwise, returns a standard message.
     """
-    should_summarize = input_data.get("jump_detected", False) and not input_data.get("analysis_error")
+    analysis_results_data = input_data.get("analysis_results", {})
+
+    should_summarize = analysis_results_data.get("jump_detected", False) and \
+                       not analysis_results_data.get("analysis_error")
 
     if should_summarize:
         print("--- Condition Met: Invoking LLM for Summarization ---")
+
+        # Prepare analysis_error for the template:
+        # If actual_analysis_error is None or an empty string (meaning no error),
+        # use the string "None" for the template. Otherwise, use the actual error string.
+        actual_analysis_error = analysis_results_data.get("analysis_error")
+        analysis_error_for_prompt = "None" if not actual_analysis_error else str(actual_analysis_error)
+
         prompt_input = {
             "week_start_date": input_data["week_start_date"].strftime('%Y-%m-%d'),
             "week_end_date": input_data["week_end_date"].strftime('%Y-%m-%d'),
-            "current_week_spend": input_data["analysis_results"]["current_week_spend"],
+            "current_week_spend": analysis_results_data.get("current_week_spend"),
             "historical_lookback_months": input_data["historical_lookback_months"],
-            "historical_weekly_avg": input_data["analysis_results"]["historical_weekly_avg"],
-            "percentage_increase": input_data["analysis_results"]["percentage_increase"],
-            "threshold_percentage": input_data["analysis_results"]["threshold_percentage"],
-            "jump_detected": input_data["analysis_results"]["jump_detected"],
-            "analysis_error": input_data["analysis_results"]["analysis_error"],
+            "historical_weekly_avg": analysis_results_data.get("historical_weekly_avg"),
+            "percentage_increase": analysis_results_data.get("percentage_increase"),
+            "threshold_percentage": analysis_results_data.get("threshold_percentage"),
+            "jump_detected": analysis_results_data.get("jump_detected"),
+            "analysis_error": analysis_error_for_prompt, # Now always a string
         }
+
+        # Filter out None values from prompt_input. This is a safeguard,
+        # especially for values that might have specific formatting in the prompt (e.g., :.2f).
+        # Since analysis_error_for_prompt is now always a string, it won't be removed.
+        # Other essential numeric values are expected to be non-None by this stage.
+        prompt_input_cleaned = {k: v for k, v in prompt_input.items() if v is not None}
+
+        # Defensive check: ensure all keys expected by the prompt are present after cleaning
+        # This is more for debugging; ideally, upstream logic ensures non-None for required formatted fields.
+        expected_keys = set(jump_summary_prompt.input_variables)
+        missing_keys = expected_keys - set(prompt_input_cleaned.keys())
+        if missing_keys:
+            # This should not happen with the current logic if numeric fields are always present
+            print(f"WARNING: Missing keys for prompt after cleaning: {missing_keys}. Prompt input was: {prompt_input}")
+            # Fallback or error handling if critical keys like 'current_week_spend' are missing
+            # For now, proceed, but this indicates an issue if it occurs for formatted numeric fields
+            # For analysis_error, we've ensured it's present.
+
         summarization_chain = jump_summary_prompt | llm | StrOutputParser()
-        return summarization_chain.invoke(prompt_input)
+        return summarization_chain.invoke(prompt_input_cleaned)
     else:
         print("--- Condition Not Met: Skipping LLM Summarization ---")
-        if input_data.get("analysis_error"):
-             return f"Analysis could not be completed due to error: {input_data.get('analysis_error')}"
+        # Use analysis_results_data to get the error or other details
+        error_msg = analysis_results_data.get("analysis_error")
+        if error_msg: # If there was an actual error string
+             return f"Analysis could not be completed due to error: {error_msg}"
+        # Handle specific cases for "no jump" message (as in previous version)
+        elif not analysis_results_data.get("jump_detected", False) and \
+             analysis_results_data.get("historical_weekly_avg", 0) <= 0 and \
+             analysis_results_data.get("current_week_spend", 0) > 0:
+            return (f"Significant spending jump detected: Current week spending is "
+                    f"{analysis_results_data.get('current_week_spend', 0):.2f} RSD, "
+                    f"but historical average was zero. Alert threshold "
+                    f"{analysis_results_data.get('threshold_percentage', 0):.1f}%.")
         else:
-             return "No significant spending jump detected."
+             current_spend_val = analysis_results_data.get('current_week_spend', 0)
+             hist_avg_val = analysis_results_data.get('historical_weekly_avg', 0)
+             increase_val = analysis_results_data.get('percentage_increase', 0)
+             threshold_val = input_data.get('jump_percentage_threshold', 0)
+
+             return (f"No significant spending jump detected above the {threshold_val:.1f}% threshold. "
+                     f"Current: {current_spend_val:.2f} RSD, Historical Avg: {hist_avg_val:.2f} RSD, "
+                     f"Increase: {increase_val:.2f}%.")
 
 
 spend_jump_analysis_chain = (
@@ -225,8 +286,8 @@ if __name__ == "__main__":
     last_monday = today - timedelta(days=today.weekday() + 7)
     last_sunday = last_monday + timedelta(days=6)
 
-    target_week_start = date.fromisoformat('2024-08-26')
-    target_week_end = date.fromisoformat('2024-09-01')
+    target_week_start = date.fromisoformat('2024-08-01')
+    target_week_end = date.fromisoformat('2024-08-07')
 
     jump_percentage_threshold = 30.0
     historical_lookback_months = 6

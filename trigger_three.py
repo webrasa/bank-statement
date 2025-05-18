@@ -11,6 +11,7 @@ from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain.tools import tool
 
 import db_connect;
+import utils;
 
 @tool
 def execute_sql_query(query: str, params: Optional[tuple] = None) -> list[tuple]:
@@ -37,6 +38,23 @@ def execute_sql_query(query: str, params: Optional[tuple] = None) -> list[tuple]
     print(f"--- Query Results ({len(results)} rows) ---\n{results[:5]}...\n-----------------------")
     # Return list of dictionaries
     return [dict(row) for row in results]
+
+def load_statements_by_month(account_number, period):
+    connection = db_connect.connect_to_db()
+    cursor = connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    query = "SELECT * FROM statements WHERE account_number = '"+account_number+"' AND  period_start_date IN ("+period+");"
+    cursor.execute(query)
+    records = cursor.fetchall()
+    # Calculate average salary
+    total_salary = float(0.0)
+    for row in records:
+        # print("row: ", row['total_credits'])
+        total_salary += float(row['total_credits'])
+    # print("total salary: ", total_salary)
+    
+    # standard_dicts = [dict(row) for row in records]
+
+    return Decimal(total_salary / len(records))
 
 
 def get_transactions_for_period(account_number: str, start_date: date, end_date: date) -> List[Dict]:
@@ -189,10 +207,16 @@ if __name__ == "__main__":
     today = date.today()
     # start_date_check = today - timedelta(days=7)
     # end_date_check = today # Check up to today
-    start_date_check = date.fromisoformat('2024-08-02')
-    end_date_check = date.fromisoformat('2024-09-01')
 
-    average_monthly_salary = 120000.00
+    month = '02'
+    year = '2025'
+    start_date_check = date.fromisoformat(year+'-'+month+'-01')
+    end_date_check = date.fromisoformat(year+'-'+month+'-28')
+
+    year_month = year+'-'+month+'-01'
+    period_query = utils.get_period(year_month, 6)
+
+    average_monthly_salary = load_statements_by_month('325930050010370593', period_query)
 
     large_tx_threshold_percentage = 30.0
 

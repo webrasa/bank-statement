@@ -197,7 +197,7 @@ if __name__ == "__main__":
 
     # today = date.today()
 
-    today = date.fromisoformat('2024-09-01')
+    today = date.fromisoformat('2025-02-01')
 
     first_day_current_month = today.replace(day=1)
     last_day_previous_month = first_day_current_month - timedelta(days=1)

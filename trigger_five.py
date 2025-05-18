@@ -188,8 +188,8 @@ if __name__ == "__main__":
     account = "325930050010370593"
 
     # today = date.today()
-    today = date.fromisoformat('2024-09-01')
-    start_date_check = today - timedelta(days=14)
+    today = date.fromisoformat('2025-02-01')
+    start_date_check = today - timedelta(days=30)
     end_date_check = today
 
     eur_threshold_value = 200.0

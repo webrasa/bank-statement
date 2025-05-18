@@ -2,6 +2,8 @@ import psycopg2
 import psycopg2.extras
 from decimal import Decimal
 from typing import Dict, Any
+from datetime import date, timedelta
+# import pandas as pd
 import re
 
 from langchain_community.chat_models import ChatOllama
@@ -11,6 +13,7 @@ from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain.tools import tool
 
 import db_connect;
+import utils;
 
 DB_SCHEMA = """
 Table: statements
@@ -170,6 +173,7 @@ Instructions:
 - Use the 'transactions' table and potentially join with 'statements' if needed for account filtering, although filtering directly on 'transactions' using account_number (if added) or statement_id might be possible. Assume 'transactions' table has an 'account_number' column for simplicity if needed, otherwise use statement_id join. Target account: '{account_number}'. Target month/year: '{month_year}'.
 - For date compare use only transaction_date from transaction table. It's type is TEXT and format is DD.MM.YYYY.
 - If you need to extract Month or Year from transaction_date use TO_DATE().
+- Do not calculate percentages in the SQL.
 
 SQL Query:
 """
@@ -187,7 +191,7 @@ You are a helpful financial assistant. Based on the analysis results provided be
 Original User Question: {question}
 
 Analysis Results:
-- Total debits in the period: {total_first_week_debit:.2f} {currency}
+- Total debits in this period: {total_first_week_debit:.2f} {currency}
 - Estimated monthly salary: {estimated_salary:.2f} {currency}
 - {percentage}% salary threshold amount: {threshold_amount:.2f} {currency}
 - Did debits exceed {percentage}% threshold?: {debits_exceed_threshold}
@@ -234,23 +238,31 @@ full_chain = (
 # --- Main Execution ---
 if __name__ == "__main__":
     account = "325930050010370593"
-    month = '08'
-    year = '2024'
-    period = ["'01.08.2024'", "'01.09.2024'", "'01.10.2024'", "'01.11.2024'", "'01.12.2024'", "'01.01.2025'"]
-    period_query = ','.join(period)
+    month = '02'
+    year = '2025'
+
+    year_month = year+'-'+month+'-01'
+    period_query = utils.get_period(year_month, 6)
+
+    # print(','.join(period))
+
+    # print('PERIOD: ', period)    
+    
+    # period = ["'01.08.2024'", "'01.09.2024'", "'01.10.2024'", "'01.11.2024'", "'01.12.2024'", "'01.01.2025'"]
+    # period_query = ','.join(period)
     estimated_salary = load_statements_by_month('325930050010370593', period_query)
 
     # estimated_salary = statements[0]['total_credits']
 
     print("ESTIMATED SALARY: ", round(estimated_salary, 2))
 
-    percentage = 40.0
+    # percentage = 40.0
     # percentage = 60.0
-    # percentage = 80.0
+    percentage = 80.0
 
-    analysis_period_description = 'first week (days 1 to 7)'
+    # analysis_period_description = 'first week (days 1 to 7)'
     # analysis_period_description = "first two weeks (days 1 to 14)"
-    # analysis_period_description = "first three weeks (days 1 to 21)"
+    analysis_period_description = "first three weeks (days 1 to 21)"
     
 
     target_month_year = year+'-'+month 
